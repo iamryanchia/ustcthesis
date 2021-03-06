@@ -10,8 +10,10 @@ from .pafpn import PAFPN
 from .rfp import RFP
 from .yolo_neck import YOLOV3Neck
 from .bifpn import BiFPN
+from .newpafpn import NewPaFPN
+from .bipafpn import BiPaFPN
 
 __all__ = [
     'FPN', 'BFP', 'ChannelMapper', 'HRFPN', 'NASFPN', 'FPN_CARAFE', 'PAFPN',
-    'NASFCOS_FPN', 'RFP', 'YOLOV3Neck', 'FPG', 'BiFPN'
+    'NASFCOS_FPN', 'RFP', 'YOLOV3Neck', 'FPG', 'BiFPN', 'NewPaFPN', 'BiPaFPN'
 ]
