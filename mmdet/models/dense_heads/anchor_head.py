@@ -48,6 +48,7 @@ class AnchorHead(BaseDenseHead, BBoxTestMixin):
                      target_means=(.0, .0, .0, .0),
                      target_stds=(1.0, 1.0, 1.0, 1.0)),
                  reg_decoded_bbox=False,
+                 still_need_encoded_bbox=False,
                  loss_cls=dict(
                      type='CrossEntropyLoss',
                      use_sigmoid=True,
@@ -73,6 +74,7 @@ class AnchorHead(BaseDenseHead, BBoxTestMixin):
         if self.cls_out_channels <= 0:
             raise ValueError(f'num_classes={num_classes} is too small')
         self.reg_decoded_bbox = reg_decoded_bbox
+        self.still_need_encoded_bbox = still_need_encoded_bbox
 
         self.bbox_coder = build_bbox_coder(bbox_coder)
         self.loss_cls = build_loss(loss_cls)
@@ -236,11 +238,8 @@ class AnchorHead(BaseDenseHead, BBoxTestMixin):
         pos_inds = sampling_result.pos_inds
         neg_inds = sampling_result.neg_inds
         if len(pos_inds) > 0:
-            if not self.reg_decoded_bbox:
-                pos_bbox_targets = self.bbox_coder.encode(
-                    sampling_result.pos_bboxes, sampling_result.pos_gt_bboxes)
-            else:
-                pos_bbox_targets = sampling_result.pos_gt_bboxes
+            pos_bbox_targets = self.bbox_coder.encode(
+                sampling_result.pos_bboxes, sampling_result.pos_gt_bboxes)
             bbox_targets[pos_inds, :] = pos_bbox_targets
             bbox_weights[pos_inds, :] = 1.0
             if gt_labels is None:
@@ -415,7 +414,14 @@ class AnchorHead(BaseDenseHead, BBoxTestMixin):
             # is applied directly on the decoded bounding boxes, it
             # decodes the already encoded coordinates to absolute format.
             anchors = anchors.reshape(-1, 4)
-            bbox_pred = self.bbox_coder.decode(anchors, bbox_pred)
+            if self.still_need_encoded_bbox:
+                bbox_pred = (bbox_pred,
+                             self.bbox_coder.decode(anchors, bbox_pred))
+                bbox_targets = (bbox_targets,
+                                self.bbox_coder.decode(anchors, bbox_targets))
+            else:
+                bbox_pred = self.bbox_coder.decode(anchors, bbox_pred)
+                bbox_targets = self.bbox_coder.decode(anchors, bbox_targets)
         loss_bbox = self.loss_bbox(
             bbox_pred,
             bbox_targets,
