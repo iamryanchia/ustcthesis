@@ -28,6 +28,7 @@ class BBoxHead(nn.Module):
                      target_stds=[0.1, 0.1, 0.2, 0.2]),
                  reg_class_agnostic=False,
                  reg_decoded_bbox=False,
+                 still_need_encoded_bbox=False,
                  loss_cls=dict(
                      type='CrossEntropyLoss',
                      use_sigmoid=False,
@@ -45,6 +46,7 @@ class BBoxHead(nn.Module):
         self.num_classes = num_classes
         self.reg_class_agnostic = reg_class_agnostic
         self.reg_decoded_bbox = reg_decoded_bbox
+        self.still_need_encoded_bbox = still_need_encoded_bbox
         self.fp16_enabled = False
 
         self.bbox_coder = build_bbox_coder(bbox_coder)
@@ -126,7 +128,10 @@ class BBoxHead(nn.Module):
                                      self.num_classes,
                                      dtype=torch.long)
         label_weights = pos_bboxes.new_zeros(num_samples)
-        bbox_targets = pos_bboxes.new_zeros(num_samples, 4)
+        if self.reg_decoded_bbox and self.still_need_encoded_bbox:
+            bbox_targets = pos_bboxes.new_zeros(num_samples, 4, 2)
+        else:
+            bbox_targets = pos_bboxes.new_zeros(num_samples, 4)
         bbox_weights = pos_bboxes.new_zeros(num_samples, 4)
         if num_pos > 0:
             labels[:num_pos] = pos_gt_labels
@@ -140,7 +145,13 @@ class BBoxHead(nn.Module):
                 # is applied directly on the decoded bounding boxes, both
                 # the predicted boxes and regression targets should be with
                 # absolute coordinate format.
-                pos_bbox_targets = pos_gt_bboxes
+                if self.still_need_encoded_bbox:
+                    pos_bbox_targets = torch.stack((self.bbox_coder.encode(
+                        pos_bboxes, pos_gt_bboxes), pos_gt_bboxes),
+                                                   dim=-1)
+                else:
+                    pos_bbox_targets = pos_gt_bboxes
+
             bbox_targets[:num_pos, :] = pos_bbox_targets
             bbox_weights[:num_pos, :] = 1
         if num_neg > 0:
@@ -247,21 +258,43 @@ class BBoxHead(nn.Module):
                     # `GIouLoss`, `DIouLoss`) is applied directly on
                     # the decoded bounding boxes, it decodes the
                     # already encoded coordinates to absolute format.
+                    if self.still_need_encoded_bbox:
+                        encoded_bbox_pred = bbox_pred
                     bbox_pred = self.bbox_coder.decode(rois[:, 1:], bbox_pred)
                 if self.reg_class_agnostic:
                     pos_bbox_pred = bbox_pred.view(
                         bbox_pred.size(0), 4)[pos_inds.type(torch.bool)]
+                    if self.reg_decoded_bbox and self.still_need_encoded_bbox:
+                        encoded_pos_bbox_pred = encoded_bbox_pred.view(
+                            encoded_bbox_pred.size(0),
+                            4)[pos_inds.type(torch.bool)]
                 else:
                     pos_bbox_pred = bbox_pred.view(
                         bbox_pred.size(0), -1,
                         4)[pos_inds.type(torch.bool),
                            labels[pos_inds.type(torch.bool)]]
-                losses['loss_bbox'] = self.loss_bbox(
-                    pos_bbox_pred,
-                    bbox_targets[pos_inds.type(torch.bool)],
-                    bbox_weights[pos_inds.type(torch.bool)],
-                    avg_factor=bbox_targets.size(0),
-                    reduction_override=reduction_override)
+                    if self.reg_decoded_bbox and self.still_need_encoded_bbox:
+                        encoded_pos_bbox_pred = encoded_bbox_pred.view(
+                            encoded_bbox_pred.size(0), -1,
+                            4)[pos_inds.type(torch.bool),
+                               labels[pos_inds.type(torch.bool)]]
+                if self.reg_decoded_bbox and self.still_need_encoded_bbox:
+                    encoded_pos_bbox_targets, pos_bbox_targets = bbox_targets[
+                        pos_inds.type(torch.bool), ...,
+                        0], bbox_targets[pos_inds.type(torch.bool), ..., 1]
+                    losses['loss_bbox'] = self.loss_bbox(
+                        (encoded_pos_bbox_pred, pos_bbox_pred),
+                        (encoded_pos_bbox_targets, pos_bbox_targets),
+                        bbox_weights[pos_inds.type(torch.bool)],
+                        avg_factor=bbox_targets.size(0),
+                        reduction_override=reduction_override)
+                else:
+                    losses['loss_bbox'] = self.loss_bbox(
+                        pos_bbox_pred,
+                        bbox_targets[pos_inds.type(torch.bool)],
+                        bbox_weights[pos_inds.type(torch.bool)],
+                        avg_factor=bbox_targets.size(0),
+                        reduction_override=reduction_override)
             else:
                 losses['loss_bbox'] = bbox_pred[pos_inds].sum()
         return losses
