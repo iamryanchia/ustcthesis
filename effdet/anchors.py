@@ -292,7 +292,7 @@ class AnchorLabeler(object):
     """Labeler for multiscale anchor boxes.
     """
 
-    def __init__(self, anchors, num_classes: int, match_threshold: float = 0.5):
+    def __init__(self, anchors, num_classes: int, match_threshold: float = 0.5, need_encode_base=False):
         """Constructs anchor labeler to assign labels to anchors.
 
         Args:
@@ -311,11 +311,12 @@ class AnchorLabeler(object):
             force_match_for_each_row=True)
         box_coder = FasterRcnnBoxCoder()
 
-        self.target_assigner = TargetAssigner(similarity_calc, matcher, box_coder)
+        self.target_assigner = TargetAssigner(similarity_calc, matcher, box_coder, need_encode_base=need_encode_base)
         self.anchors = anchors
         self.match_threshold = match_threshold
         self.num_classes = num_classes
         self.indices_cache = {}
+        self.need_encode_base = need_encode_base
 
     def label_anchors(self, gt_boxes, gt_classes, filter_valid=True):
         """Labels anchors with ground truth inputs.
@@ -360,7 +361,10 @@ class AnchorLabeler(object):
             feat_size = self.anchors.feat_sizes[level]
             steps = feat_size[0] * feat_size[1] * self.anchors.get_anchors_per_location()
             cls_targets_out.append(cls_targets[count:count + steps].view([feat_size[0], feat_size[1], -1]))
-            box_targets_out.append(box_targets[count:count + steps].view([feat_size[0], feat_size[1], -1]))
+            if self.need_encode_base:
+                box_targets_out.append(box_targets[count:count + steps].view([feat_size[0], feat_size[1], -1, 2]))
+            else:
+                box_targets_out.append(box_targets[count:count + steps].view([feat_size[0], feat_size[1], -1]))
             count += steps
 
         num_positives = (matches.match_results > -1).float().sum()
@@ -412,4 +416,3 @@ class AnchorLabeler(object):
                 num_positives_out = torch.stack(num_positives_out)
 
         return cls_targets_out, box_targets_out, num_positives_out
-

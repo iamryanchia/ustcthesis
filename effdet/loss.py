@@ -10,6 +10,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from typing import Optional, List, Tuple
+from .liou_loss import LIoULoss
+
+liou_loss = LIoULoss()
 
 
 def focal_loss_legacy(logits, targets, alpha: float, gamma: float, normalizer):
@@ -129,6 +132,12 @@ def _box_loss(box_outputs, box_targets, num_positives, delta: float = 0.1):
     # delta is typically around the mean value of regression target.
     # for instances, the regression targets of 512x512 input with 6 anchors on
     # P3-P7 pyramid is about [0.1, 0.1, 0.2, 0.2].
+    if box_targets.dim() > 4:
+        normalizer = num_positives * 4.0
+        mask = box_targets[..., 0] != 0.0
+        box_loss = liou_loss(box_outputs, box_targets, weights=mask, delta=delta, size_average=False)
+        return box_loss / normalizer
+
     normalizer = num_positives * 4.0
     mask = box_targets != 0.0
     box_loss = huber_loss(box_outputs, box_targets, weights=mask, delta=delta, size_average=False)
@@ -220,7 +229,8 @@ def loss_fn(
     return total_loss, cls_loss, box_loss
 
 
-loss_jit = torch.jit.script(loss_fn)
+# loss_jit = torch.jit.script(loss_fn)
+loss_jit = loss_fn
 
 
 class DetectionLoss(nn.Module):

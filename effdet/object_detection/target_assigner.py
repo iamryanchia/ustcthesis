@@ -49,7 +49,7 @@ class TargetAssigner(object):
 
     def __init__(self, similarity_calc: IouSimilarity, matcher: ArgMaxMatcher, box_coder: FasterRcnnBoxCoder,
                  negative_class_weight: float = 1.0, unmatched_cls_target: Optional[float] = None,
-                 keypoints_field_name: str = KEYPOINTS_FIELD_NAME):
+                 keypoints_field_name: str = KEYPOINTS_FIELD_NAME, need_encode_base=False):
         """Construct Object Detection Target Assigner.
 
         Args:
@@ -82,6 +82,7 @@ class TargetAssigner(object):
         else:
             self._unmatched_cls_target = 0.
         self._keypoints_field_name = keypoints_field_name
+        self.need_encode_base = need_encode_base
 
     def assign(self, anchors: BoxList, groundtruth_boxes: BoxList, groundtruth_labels=None, groundtruth_weights=None):
         """Assign classification and regression targets to each anchor.
@@ -182,6 +183,8 @@ class TargetAssigner(object):
 
         matched_anchors_mask = match.matched_column_indicator()
         reg_targets = torch.where(matched_anchors_mask.unsqueeze(1), matched_reg_targets, unmatched_ignored_reg_targets)
+        if self.need_encode_base:
+            reg_targets = torch.stack((reg_targets, anchors.boxes()), dim=-1)
         return reg_targets
 
     def _default_regression_target(self, device: torch.device):

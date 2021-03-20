@@ -172,7 +172,7 @@ parser.add_argument('--log-interval', type=int, default=50, metavar='N',
                     help='how many batches to wait before logging training status')
 parser.add_argument('--recovery-interval', type=int, default=0, metavar='N',
                     help='how many batches to wait before writing recovery checkpoint')
-parser.add_argument('-j', '--workers', type=int, default=4, metavar='N',
+parser.add_argument('-j', '--workers', type=int, default=6, metavar='N',
                     help='how many training processes to use (default: 1)')
 parser.add_argument('--save-images', action='store_true', default=False,
                     help='save images of input bathes every log interval for debugging')
@@ -200,6 +200,8 @@ parser.add_argument('--tta', type=int, default=0, metavar='N',
                     help='Test/inference time augmentation (oversampling) factor. 0=None (default: 0)')
 parser.add_argument("--local_rank", default=0, type=int)
 parser.add_argument('--fpn-name', type=str, default='bifpn_fa', help='specify which fpn structure to use')
+parser.add_argument('--need-encode-base', action='store_true', help='use LIoU Loss')
+parser.add_argument('--no-hard-mining', action='store_true', help='do not use hard-mining LIoU Loss')
 
 
 def _parse_args():
@@ -222,6 +224,10 @@ def _parse_args():
 def main():
     setup_default_logging()
     args, args_text = _parse_args()
+
+    if args.no_hard_mining:
+        from effdet import LIoULoss
+        LIoULoss.hard_mining = False
 
     args.pretrained_backbone = not args.no_pretrained_backbone
     args.prefetcher = not args.no_prefetcher
@@ -469,7 +475,7 @@ def create_datasets_and_loaders(
     labeler = None
     if not args.bench_labeler:
         labeler = AnchorLabeler(
-            Anchors.from_config(model_config), model_config.num_classes, match_threshold=0.5)
+            Anchors.from_config(model_config), model_config.num_classes, match_threshold=0.5, need_encode_base=args.need_encode_base)
 
     loader_train = create_loader(
         dataset_train,
