@@ -199,6 +199,7 @@ parser.add_argument('--eval-metric', default='map', type=str, metavar='EVAL_METR
 parser.add_argument('--tta', type=int, default=0, metavar='N',
                     help='Test/inference time augmentation (oversampling) factor. 0=None (default: 0)')
 parser.add_argument("--local_rank", default=0, type=int)
+parser.add_argument('--fpn-name', type=str, default='bifpn_fa', help='specify which fpn structure to use')
 
 
 def _parse_args():
@@ -282,6 +283,7 @@ def main():
             soft_nms=args.soft_nms,
             bench_labeler=args.bench_labeler,
             checkpoint_path=args.initial_checkpoint,
+            fpn_name=args.fpn_name,
         )
     model_config = model.config  # grab before we obscure with DP/DDP wrappers
 

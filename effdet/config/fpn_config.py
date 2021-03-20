@@ -169,6 +169,45 @@ def qufpn_config(min_level, max_level, weight_method=None):
     return p
 
 
+def new_panfpn_config(min_level, max_level, weight_method=None):
+    p = OmegaConf.create()
+    weight_method = weight_method or 'fastattn'
+
+    num_levels = max_level - min_level + 1
+    assert num_levels >= 5 and (num_levels - 3) % 2 == 0
+    node_ids = {min_level + i: [i] for i in range(num_levels)}
+
+    level_last_id = lambda level: node_ids[level][-1]
+    id_cnt = itertools.count(num_levels)
+
+    p.nodes = []
+    for i in range(max_level - 1, min_level - 1, -1):
+        # top-down path
+        inputs_offsets = [level_last_id(i), level_last_id(i + 1)]
+        if i != max_level - 1 and (max_level - 1 - i) % 2 == 0:
+            inputs_offsets.append(level_last_id(i + 2))
+
+        p.nodes.append({
+            'reduction': 1 << i,
+            'inputs_offsets': inputs_offsets,
+            'weight_method': weight_method,
+        })
+        node_ids[i].append(next(id_cnt))
+
+    for i in range(min_level + 1, max_level + 1):
+        # bottom-up path.
+        inputs_offsets = [level_last_id(i), level_last_id(i - 1)]
+        if (i - min_level) % 2 == 0:
+            inputs_offsets.append(level_last_id(i - 2))
+        p.nodes.append({
+            'reduction': 1 << i,
+            'inputs_offsets': inputs_offsets,
+            'weight_method': weight_method,
+        })
+        node_ids[i].append(next(id_cnt))
+    return p
+
+
 def get_fpn_config(fpn_name, min_level=3, max_level=7):
     if not fpn_name:
         fpn_name = 'bifpn_fa'
@@ -180,5 +219,6 @@ def get_fpn_config(fpn_name, min_level=3, max_level=7):
         'pan_fa': panfpn_config(min_level=min_level, max_level=max_level, weight_method='fastattn'),
         'qufpn_sum': qufpn_config(min_level=min_level, max_level=max_level, weight_method='sum'),
         'qufpn_fa': qufpn_config(min_level=min_level, max_level=max_level, weight_method='fastattn'),
+        'new_pafpn_fa': new_panfpn_config(min_level=min_level, max_level=max_level, weight_method='fastattn'),
     }
     return name_to_config[fpn_name]

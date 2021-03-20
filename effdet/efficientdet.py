@@ -158,8 +158,10 @@ class ResampleFeatureMap(nn.Sequential):
                 self.add_module('conv', conv)
             if downsample in ('max', 'avg'):
                 stride_size = int(reduction_ratio)
-                downsample = create_pool2d(
-                     downsample, kernel_size=stride_size + 1, stride=stride_size, padding=pad_type)
+                if downsample == 'max':
+                    downsample = nn.MaxPool2d(stride_size + 1, stride=stride_size, padding=1)
+                else:
+                    downsample = nn.AvgPool2d(stride_size + 1, stride=stride_size, padding=1)
             else:
                 downsample = Interpolate2d(scale_factor=1./reduction_ratio, mode=downsample)
             self.add_module('downsample', downsample)

@@ -28,6 +28,7 @@ def create_model_from_config(
         value = kwargs.pop(ov, None)
         if value is not None:
             setattr(config, ov, value)
+    setattr(config, 'fpn_name', kwargs.pop('fpn_name'))
 
     labeler = kwargs.pop('bench_labeler', False)
 
