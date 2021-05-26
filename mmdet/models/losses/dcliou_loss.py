@@ -1,4 +1,4 @@
-from math import pi
+from math import pi, pow
 
 import mmcv
 import torch
@@ -11,7 +11,14 @@ from .utils import weighted_loss
 
 @mmcv.jit(derivate=True, coderize=True)
 @weighted_loss
-def liou_loss(encode_decode_preds, encode_decode_targets, beta=1.0, eps=1e-6):
+def liou_loss(encode_decode_preds,
+              encode_decode_targets,
+              beta=1.0,
+              alpha=2.0,
+              gamma=8.0,
+              c=None,
+              hard_mining=False,
+              eps=1e-6):
     encode_pred, decode_pred = encode_decode_preds
     encode_target, decode_target = encode_decode_targets
 
@@ -22,7 +29,14 @@ def liou_loss(encode_decode_preds, encode_decode_targets, beta=1.0, eps=1e-6):
     smooth_l1_loss = torch.where(diff < beta, 0.5 * diff * diff / beta,
                                  diff - 0.5 * beta).sum(1)
 
-    loss = 1 - ious + smooth_l1_loss
+    if hard_mining:
+        with torch.no_grad():
+            coeff = 1 - torch.pow(ious, gamma)
+        if c is None:
+            c = LIoULoss.compute_c(gamma)
+        loss = alpha * (c - coeff * ious) + smooth_l1_loss
+    else:
+        loss = 1 - ious + smooth_l1_loss
     return loss
 
 
@@ -78,12 +92,32 @@ def navie_iou_loss(pred, target, eps=1e-6):
 @LOSSES.register_module()
 class LIoULoss(nn.Module):
 
-    def __init__(self, beta=1.0, eps=1e-6, reduction='mean', loss_weight=1.0):
+    def __init__(self,
+                 beta=1.0,
+                 alpha=2.0,
+                 gamma=8.0,
+                 hard_mining=False,
+                 eps=1e-6,
+                 reduction='mean',
+                 loss_weight=1.0):
         super(LIoULoss, self).__init__()
         self.beta = beta
+        self.alpha = alpha
+        self.gamma = gamma
+        self.hard_mining = hard_mining
         self.eps = eps
         self.reduction = reduction
         self.loss_weight = loss_weight
+        self.c = LIoULoss.compute_c(gamma) if hard_mining else None
+
+    @staticmethod
+    def compute_c(gamma):
+        """c is used to make c - (alpha - iou) ^ gamma * iou >= 0.
+        In other words, c is maximum value of (alpha - iou) ^ gamma * iou.
+        For efficiency, c is precomputed then pass to loss func.
+        """
+        c = gamma / pow(gamma + 1, 1 / gamma + 1)
+        return c
 
     def forward(self,
                 encode_decode_preds,
@@ -110,6 +144,10 @@ class LIoULoss(nn.Module):
             encode_decode_targets,
             weight,
             beta=self.beta,
+            alpha=self.alpha,
+            gamma=self.gamma,
+            c=self.c,
+            hard_mining=self.hard_mining,
             eps=self.eps,
             reduction=reduction,
             avg_factor=avg_factor,
