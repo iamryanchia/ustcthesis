@@ -14,3 +14,7 @@ PythonAPI/pycocotools/_mask.so
 PythonAPI/pycocotools/coco.pyc
 PythonAPI/pycocotools/cocoeval.pyc
 PythonAPI/pycocotools/mask.pyc
+
+.vscode
+*.pyc
+analyze_figures
