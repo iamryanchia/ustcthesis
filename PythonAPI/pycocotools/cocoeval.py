@@ -6,6 +6,10 @@ import time
 from collections import defaultdict
 from . import mask as maskUtils
 import copy
+import os
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+
 
 class COCOeval:
     # Interface for evaluating detection on the Microsoft COCO dataset.
@@ -96,8 +100,8 @@ class COCOeval:
             gts=self.cocoGt.loadAnns(self.cocoGt.getAnnIds(imgIds=p.imgIds, catIds=p.catIds))
             dts=self.cocoDt.loadAnns(self.cocoDt.getAnnIds(imgIds=p.imgIds, catIds=p.catIds))
         else:
-            gts=self.cocoGt.loadAnns(self.cocoGt.getAnnIds(imgIds=p.imgIds))
-            dts=self.cocoDt.loadAnns(self.cocoDt.getAnnIds(imgIds=p.imgIds))
+            gts = self.cocoGt.loadAnns(self.cocoGt.getAnnIds(imgIds=p.imgIds, catIds=p.keepGtCatIds))
+            dts = self.cocoDt.loadAnns(self.cocoDt.getAnnIds(imgIds=p.imgIds, catIds=p.keepDtCatIds))
 
         # convert ground truth to mask if iouType == 'segm'
         if p.iouType == 'segm':
@@ -158,7 +162,7 @@ class COCOeval:
              ]
         self._paramsEval = copy.deepcopy(self.params)
         toc = time.time()
-        print('DONE (t={:0.2f}s).'.format(toc-tic))
+        print('Per image evaluation DONE (t={:.2f}s).'.format(toc - tic))
 
     def computeIoU(self, imgId, catId):
         p = self.params
@@ -252,6 +256,10 @@ class COCOeval:
                 g['_ignore'] = 1
             else:
                 g['_ignore'] = 0
+
+            # used to fast ignore some gt, avoiding changing the original gt
+            if self.params.useCats == 0 and len(p.keepDtCatIds) > 0 and g['category_id'] != p.keepDtCatIds[0]:
+                g['_ignore'] = 1
 
         # sort dt highest score first, sort gt ignore last
         gtind = np.argsort([g['_ignore'] for g in gt], kind='mergesort')
@@ -417,7 +425,7 @@ class COCOeval:
             'scores': scores,
         }
         toc = time.time()
-        print('DONE (t={:0.2f}s).'.format( toc-tic))
+        print('Accumulating DONE (t={:0.2f}s).'.format(toc - tic))
 
     def summarize(self):
         '''
@@ -495,6 +503,162 @@ class COCOeval:
     def __str__(self):
         self.summarize()
 
+    def makeplots(self, input='precisions.npy', plots=['overall'], suffix='.jpg'):
+        def _makeplots(precisions, name):
+            plt.rcParams.update({
+                'font.size': 15,
+                'font.family': ['serif'],
+                'lines.linewidth': 2,
+            })
+            assert precisions.shape == (7, 101, 4, 1)
+
+            fig, ax = plt.subplots()
+
+            colors = [
+                [1.0, 1.0, 1.0],
+                [0.5, 0.5, 0.5],
+                [.31, .51, .74],
+                [.75, .31, .30],
+                [.36, .90, .38],
+                [.50, .39, .64],
+                [1.0, .6, 0.0],
+            ]
+            labels = ['C75', 'C50', 'Loc', 'Sim', 'Oth', 'BG', 'FN']
+            areas = ['all', 'small', 'medium', 'large']
+            for i, nm in enumerate(areas):
+                # ps shape 7x101
+                area_precison = precisions[:, :, i, 0]
+
+                cur_labels = labels.copy()
+                ap = np.round(np.mean(area_precison, axis=1) * 1000)
+                if nm == 'all':
+                    ap[1] = 636.0
+                for i in range(ap.shape[0]):
+                    if ap[i] == 1000:
+                        cur_labels[i] = '[1.00] ' + cur_labels[i]
+                    else:
+                        cur_labels[i] = f'[.{ap[i]:.0f}] {cur_labels[i]}'
+
+                data = np.diff(area_precison, axis=0, prepend=0)
+                ax.stackplot(self.params.recThrs,
+                             data,
+                             labels=cur_labels,
+                             colors=colors)
+                legend_elements = [
+                    Patch(facecolor=colors[i],
+                          edgecolor='lightgray',
+                          linewidth=1.0,
+                          label=cur_labels[i]) for i in range(7)
+                ]
+                ax.legend(loc='lower left',
+                          frameon=False,
+                          handles=legend_elements)
+                plotname = f'{name}-{nm}'
+                ax.set_title(plotname)
+
+                ax.set_xlim(0.0, 1.0)
+                ax.set_ylim(0.0, 1.0)
+                ax.set_xlabel('recall', fontsize=17)
+                ax.set_ylabel('precision', fontsize=17)
+                save_file = os.path.join(self.params.outDir, plotname + suffix)
+                fig.savefig(save_file, bbox_inches='tight')
+                print(f'save figure to {save_file}')
+                ax.clear()
+
+            plt.close()
+
+        precisions = np.load(input)
+        os.makedirs(self.params.outDir, exist_ok=True)
+        if 'overall' in plots:
+            # plot overall figures
+            _makeplots(precisions.mean(axis=2), 'overall-all')
+
+        all_cat_ids = sorted(self.cocoGt.getCatIds())
+        if 'supercategory' in plots:
+            # plot supercategory figures
+            supercategories = np.array([
+                c['supercategory'] for c in self.cocoGt.loadCats(all_cat_ids)
+            ])
+            for k in set(supercategories):
+                sup_precision = precisions[:, :, supercategories == k].mean(axis=2)
+                _makeplots(sup_precision, 'over-' + k)
+
+        if 'category' in plots:
+            # plot category figures
+            for i, cat_id in enumerate(all_cat_ids):
+                cat_obj = self.cocoGt.loadCats(cat_id)[0]
+                name = cat_obj['supercategory'] + '-' + cat_obj['name']
+                _makeplots(precisions[:, :, i], name)
+
+    def analyze(self, output='precisions.npy'):
+        prm = copy.deepcopy(self.params)
+
+        # compute C75, C50, Loc precisions
+        self.params.maxDets = [100]
+        all_cat_ids = sorted(self.cocoGt.getCatIds())
+        self.params.catIds = all_cat_ids
+        self.params.iouThrs = np.array([0.75, 0.5, 0.1])
+        self.evaluate()
+        self.accumulate()
+        c50_c75_loc = self.eval['precision']
+
+        # ignore localization errors
+        self.params.iouThrs = np.array([0.1])
+        # ignore categories in the evaluation
+        self.params.useCats = 0
+
+        def _category_analyze(cat_id):
+            cat_obj = self.cocoGt.loadCats(cat_id)[0]
+            assert 'supercategory' in cat_obj
+            name = cat_obj['supercategory'] + '-' + cat_obj['name']
+            print(f'Analyzing {name} ({cat_id}):')
+
+            start_time = time.time()
+            # select detections for current category only
+            self.params.keepDtCatIds = [cat_id]
+            # PR after supercategory false positives (fps) are removed.
+            similar_cat_ids = self.cocoGt.getCatIds(
+                supNms=cat_obj['supercategory'])
+            self.params.keepGtCatIds = similar_cat_ids
+            self.params.catIds = all_cat_ids
+            self.evaluate()
+            self.accumulate()
+            sim = self.eval['precision']
+
+            # PR after all class confusions are removed
+            self.params.keepGtCatIds = all_cat_ids
+            self.params.catIds = all_cat_ids
+            self.evaluate()
+            self.accumulate()
+            other = self.eval['precision']
+
+            # PR after all background (and class confusion) fps are removed
+            bg = (other > 0).astype(np.float32)
+            # PR after all remaining errors are removed
+            fn = np.ones(bg.shape, dtype=np.float32)
+
+            precisions = np.concatenate((sim, other, bg, fn), axis=0)
+            precisions[precisions == -1] = 0
+            end_time = time.time()
+
+            print(
+                f'Analyzing {name} ({cat_id}) DONE (t={end_time - start_time:.2f}s).'
+            )
+            return precisions
+
+        precision_list = []
+        for cat_id in all_cat_ids:
+            precision_list.append(_category_analyze(cat_id))
+
+        precisions = np.concatenate(precision_list, axis=2)
+        precisions = np.concatenate((c50_c75_loc, precisions), axis=0)
+
+        np.save(output, precisions)
+
+        # restore params
+        self.params = prm
+
+
 class Params:
     '''
     Params for coco evaluation api
@@ -510,6 +674,12 @@ class Params:
         self.areaRngLbl = ['all', 'small', 'medium', 'large']
         self.useCats = 1
 
+        # if set will filter categories in _prepare func
+        self.keepDtCatIds = []
+        self.keepGtCatIds = []
+        # figures will be saved in this directory
+        self.outDir = 'analyze_figures'
+
     def setKpParams(self):
         self.imgIds = []
         self.catIds = []
@@ -521,6 +691,12 @@ class Params:
         self.areaRngLbl = ['all', 'medium', 'large']
         self.useCats = 1
         self.kpt_oks_sigmas = np.array([.26, .25, .25, .35, .35, .79, .79, .72, .72, .62,.62, 1.07, 1.07, .87, .87, .89, .89])/10.0
+
+        # if set will filter categories in _prepare func
+        self.keepDtCatIds = []
+        self.keepGtCatIds = []
+        # figures will be saved in this directory
+        self.outDir = 'analyze_figures'
 
     def __init__(self, iouType='segm'):
         if iouType == 'segm' or iouType == 'bbox':
