@@ -2,7 +2,7 @@
 
 This repo holds the source code of my master's thesis.
 
-You can check the specific branch to find the code of each chapter. **The full text of the thesis will be released soon.**
+You can check the specific branch to find the code of each chapter. **The full text of the thesis will be available from CNKI.**
 
 My research topic is object detection. In the thesis, I improve the object detector from three perspectives:
 
